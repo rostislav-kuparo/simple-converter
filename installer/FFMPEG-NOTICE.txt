@@ -1,0 +1,11 @@
+Simple Converter ships FFmpeg as two separate programs, ffmpeg.exe and ffprobe.exe,
+and runs them as external processes. Simple Converter itself is MIT-licensed.
+
+FFmpeg is free software licensed under the GNU General Public License v3
+(see LICENSE.txt in this folder). Build details are in README.txt.
+
+  FFmpeg project:  https://ffmpeg.org
+  Source code:     https://github.com/FFmpeg/FFmpeg (commit noted in README.txt)
+  Windows builds:  https://www.gyan.dev/ffmpeg/builds/
+
+You may replace these two files with any other FFmpeg build.

@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Converter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23111'/%3E%3Cpath d='M10 13h11l-3-3M22 19H11l3 3' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fafaf9; --panel: #ffffff; --fg: #121212; --mut: #8b8b88; --line: #ebebea; --soft: #f2f2f0;
+  --ok: #17924d; --err: #d33a2c; --r: 14px; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0d0d; --panel: #161616; --fg: #f1f1f0; --mut: #8a8a87; --line: #252525; --soft: #1d1d1d;
+    --ok: #4cc47f; --err: #ff6d60; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { background: var(--bg); color: var(--fg); }
+body {
+  font: 14px/1.45 "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+svg { display: block; }
+[hidden] { display: none !important; }
+
+.app { max-width: 680px; margin: 0 auto; padding: 36px 16px 40px; min-height: 100vh; display: flex; flex-direction: column; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
+.logo { width: 26px; height: 26px; border-radius: 8px; background: var(--fg); color: var(--bg); display: grid; place-items: center; }
+
+.seg { display: inline-flex; background: var(--soft); border-radius: 999px; padding: 3px; }
+.seg button { padding: 6px 14px; border-radius: 999px; color: var(--mut); transition: color .15s, background .15s; }
+.seg button.on { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 0 0 1px var(--line); }
+
+.banner { border: 1px solid var(--err); color: var(--err); border-radius: var(--r); padding: 12px 14px; margin-bottom: 16px; }
+.banner code { font-family: ui-monospace, Consolas, monospace; background: var(--soft); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
+
+.drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 240px; padding: 24px; text-align: center; color: var(--mut);
+  border: 1.5px dashed color-mix(in srgb, var(--mut) 45%, transparent); border-radius: 18px; cursor: pointer;
+  transition: background .15s, border-color .15s, min-height .25s;
+}
+.drop:hover, .drop.over { border-color: var(--mut); background: var(--soft); }
+.drop-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--soft); color: var(--fg); display: grid; place-items: center; margin-bottom: 10px; transition: .2s; }
+.drop:hover .drop-icon { background: var(--panel); }
+.drop-title { color: var(--fg); font-size: 16px; font-weight: 500; }
+.drop-sub { font-size: 13px; }
+.has-files .drop { min-height: 52px; flex-direction: row; gap: 10px; padding: 10px; }
+.has-files .drop-icon { width: 26px; height: 26px; border-radius: 8px; margin: 0; }
+.has-files .drop-title { font-size: 14px; }
+.has-files .drop-sub { display: none; }
+
+.list { list-style: none; padding: 0; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.item {
+  position: relative; overflow: hidden; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: start;
+  padding: 12px 12px 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  animation: in .2s ease;
+}
+@keyframes in { from { opacity: 0; transform: translateY(4px); } }
+.ic { width: 36px; height: 36px; border-radius: 10px; background: var(--soft); color: var(--mut); display: grid; place-items: center; }
+.name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-top: 1px; }
+.meta { color: var(--mut); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side { display: flex; align-items: center; gap: 6px; height: 36px; }
+.st { font-size: 12.5px; color: var(--mut); white-space: nowrap; }
+.st.ok { color: var(--ok); }
+.st.err { color: var(--err); }
+.x { width: 28px; height: 28px; border-radius: 8px; color: var(--mut); display: grid; place-items: center; }
+.x:hover { background: var(--soft); color: var(--fg); }
+.prog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--fg); transition: width .3s ease, opacity .3s; }
+.err-msg { color: var(--err); font-size: 12.5px; margin-top: 4px; word-break: break-word; }
+.outs { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.out { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.out .arrow { color: var(--mut); flex: none; }
+.out .fn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; text-align: left; }
+.out .fn:hover { text-decoration-color: var(--fg); }
+.out .sz { color: var(--mut); white-space: nowrap; }
+.out .d { white-space: nowrap; color: var(--mut); }
+.out .d.down { color: var(--ok); }
+.out .rv { color: var(--mut); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex: none; }
+.out .rv:hover { background: var(--soft); color: var(--fg); }
+.note { color: var(--mut); font-size: 12px; }
+
+.opts { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 4px 16px; }
+.group { padding: 12px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.group:first-child { border-top: 0; }
+.gt { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mut); }
+.row { display: flex; align-items: center; gap: 8px 12px; min-height: 32px; flex-wrap: wrap; }
+.lbl { width: 92px; flex: none; color: var(--mut); font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips button { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; transition: background .12s, color .12s, border-color .12s; }
+.chips button:hover { border-color: var(--mut); }
+.chips button.on { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+.range { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 180px; max-width: 320px; }
+.range input { flex: 1; accent-color: var(--fg); }
+.range output { width: 28px; text-align: right; font-size: 13px; }
+.tog { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.tog input { position: absolute; opacity: 0; pointer-events: none; }
+.sw { width: 32px; height: 18px; border-radius: 999px; background: var(--line); position: relative; transition: background .15s; flex: none; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.tog input:checked + .sw { background: var(--fg); }
+.tog input:checked + .sw::after { transform: translateX(14px); }
+.tog input:focus-visible + .sw { outline: 2px solid var(--fg); outline-offset: 2px; }
+.hint { color: var(--mut); font-size: 12.5px; }
+.num { width: 64px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--fg); font: inherit; font-size: 13px; text-align: right; }
+.num:disabled { opacity: .4; }
+.sub { padding-left: 104px; display: flex; flex-direction: column; gap: 8px; }
+.sub .lbl { width: auto; min-width: 56px; }
+
+.bar {
+  position: sticky; bottom: 12px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 8px 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.06);
+}
+.folder { display: flex; align-items: center; gap: 8px; color: var(--mut); font-size: 13px; min-width: 0; padding: 4px; border-radius: 8px; }
+.folder:hover { color: var(--fg); }
+.folder span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.ghost { padding: 8px 14px; border-radius: 999px; color: var(--mut); }
+.ghost:hover { color: var(--fg); background: var(--soft); }
+.primary { padding: 9px 22px; border-radius: 999px; background: var(--fg); color: var(--bg); font-weight: 500; transition: opacity .15s; }
+.primary:disabled { opacity: .3; }
+.primary.stop { background: none; color: var(--fg); box-shadow: inset 0 0 0 1.5px var(--fg); }
+.spacer { flex: 1; }
+
+.veil {
+  position: fixed; inset: 10px; border: 2px dashed var(--fg); border-radius: 22px; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  display: grid; place-items: center; font-size: 17px; font-weight: 500; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 10;
+}
+body.dragging .veil { opacity: 1; }
+
+@media (max-width: 560px) {
+  .lbl { width: 100%; }
+  .sub { padding-left: 0; }
+  .folder span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand">
+      <span class="logo"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h9l-2.5-2.5M13 10H4l2.5 2.5"/></svg></span>
+      Simple Converter
+    </div>
+    <div class="seg" id="mode">
+      <button data-v="convert">Конвертировать</button>
+      <button data-v="compress">Сжать</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="pick" multiple hidden>
+    <span class="drop-icon"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 3.5v11M3.5 9h11"/></svg></span>
+    <span class="drop-title" id="dropTitle">Перетащите файлы сюда</span>
+    <span class="drop-sub">или нажмите, чтобы выбрать · видео, фото, аудио</span>
+  </label>
+
+  <ul class="list" id="list"></ul>
+
+  <section class="opts" id="opts" hidden></section>
+
+  <div class="spacer"></div>
+
+  <footer class="bar" id="bar" hidden>
+    <button class="folder" id="folder" title="Открыть папку с результатами">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.5c0-.6.4-1 1-1h3.2l1.5 1.5H13c.6 0 1 .4 1 1V12c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1V4.5Z"/></svg>
+      <span id="folderName">Загрузки</span>
+    </button>
+    <div class="actions">
+      <button class="ghost" id="clear" hidden>Очистить</button>
+      <button class="primary" id="go">Начать</button>
+    </div>
+  </footer>
+</div>
+<div class="veil">Отпустите, чтобы добавить</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const ICONS = {
+  video: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2" y="4" width="10" height="10" rx="2"/><path d="m12 8 4-2.2v6.4L12 10"/></svg>',
+  image: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2.5" y="3" width="13" height="12" rx="2"/><circle cx="6.5" cy="7" r="1.2"/><path d="m3 13.5 4-4 3 3 2-2 3.5 3.5"/></svg>',
+  audio: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 7.5v3M6 5v8M9 3v12M12 6v6M15 8v2"/></svg>',
+  file: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4.5 2.5h6l3 3v10h-9z"/></svg>',
+};
+const X_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3.5 3.5 7 7m0-7-7 7"/></svg>';
+const REVEAL_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.5c0-.6.4-1 1-1h3.2l1.5 1.5H13c.6 0 1 .4 1 1V12c0 .6-.4 1-1 1H3c-.6 0-1-.4-1-1V4.5Z"/></svg>';
+
+const EXT = {
+  image: 'jpg jpeg jpe jfif png webp bmp dib tif tiff gif ico avif heic heif jxl tga qoi psd ppm pgm pbm pnm exr hdr jp2',
+  video: 'mp4 m4v mkv mov avi webm wmv flv ts mts m2ts mpg mpeg vob 3gp 3g2 ogv mxf f4v asf divx rm rmvb y4m',
+  audio: 'mp3 wav flac aac m4a ogg oga opus wma aiff aif alac ac3 eac3 dts amr mka caf wv ape',
+};
+const guessKind = name => {
+  const ext = name.split('.').pop().toLowerCase();
+  return Object.keys(EXT).find(k => EXT[k].split(' ').includes(ext)) || 'file';
+};
+
+// ---------- settings ----------
+const DEFAULTS = {
+  mode: 'convert', video_format: 'mp4', codec: 'h264', quality: 'balanced', resolution: 0,
+  target_on: false, target_mb: 25, gpu: true,
+  image_format: 'jpg', image_format_z: 'same', image_quality: 82, image_max: 0,
+  audio_format: 'mp3', extract_audio: false, extract_format: 'mp3', video_audio: 'mute',
+};
+let S = { ...DEFAULTS };
+try { Object.assign(S, JSON.parse(localStorage.getItem('sc.settings') || '{}')); } catch {}
+const save = () => { try { localStorage.setItem('sc.settings', JSON.stringify(S)); } catch {} };
+
+let CAPS = { ffmpeg: true, hw: null, av1: true, out_short: 'Загрузки' };
+
+function payload() {
+  const z = S.mode === 'compress';
+  return {
+    mode: S.mode, video_format: S.video_format, codec: S.codec, quality: S.quality,
+    resolution: +S.resolution, target_mb: z && S.target_on ? Math.max(0, +S.target_mb || 0) : 0,
+    gpu: !!S.gpu && !!CAPS.hw,
+    image_format: z ? S.image_format_z : S.image_format, image_quality: +S.image_quality, image_max: z ? +S.image_max : 0,
+    audio_format: S.audio_format, extract_audio: !!S.extract_audio, extract_format: S.extract_format, video_audio: S.video_audio,
+  };
+}
+
+// ---------- items ----------
+const items = new Map();   // key -> item;  key is 's<id>' for server items, 'u<n>' while uploading
+const rows = new Map();    // key -> <li>
+const uploads = new Map(); // key -> XMLHttpRequest
+const PAGE = Math.random().toString(36).slice(2, 8); // upload keys must not collide between windows
+let seq = 0;
+const keyOf = it => 's' + it.id;
+
+function fmtSize(b) {
+  if (!b && b !== 0) return '';
+  const u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (i === 0 ? b : b.toFixed(b < 10 ? 1 : 0)).toString().replace('.', ',') + ' ' + u[i];
+}
+function fmtTime(s) {
+  if (!(s > 0)) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+function meta(it) {
+  const parts = [fmtSize(it.size)];
+  const i = it.info || {};
+  if (it.kind === 'video' || it.kind === 'audio') parts.push(fmtTime(i.duration));
+  if (i.width) parts.push(`${i.width}×${i.height}`);
+  if (it.kind === 'video' && i.vcodec) parts.push(i.vcodec.toUpperCase() + (i.has_audio ? '' : ' · без звука'));
+  if (it.kind === 'audio' && i.acodec) parts.push(i.acodec.toUpperCase());
+  return parts.filter(Boolean).join(' · ');
+}
+
+function statusText(it) {
+  switch (it.status) {
+    case 'uploading': return [`Загрузка ${Math.round((it.progress || 0) * 100)}%`, ''];
+    case 'queued': return ['В очереди', ''];
+    case 'running': {
+      const p = it.kind === 'image' || !(it.progress > 0) ? 'Обработка…' : `${Math.round(it.progress * 100)}%`;
+      return [it.speed ? `${p} · ${it.speed}` : p, ''];
+    }
+    case 'done': return ['Готово', 'ok'];
+    case 'error': return ['Ошибка', 'err'];
+    case 'cancelled': return ['Отменено', ''];
+    default: return ['', ''];
+  }
+}
+
+function renderItem(key) {
+  const it = items.get(key);
+  let li = rows.get(key);
+  if (!li) {
+    li = document.createElement('li');
+    li.className = 'item';
+    li.innerHTML = `<div class="ic"></div><div class="body"><div class="name"></div><div class="meta"></div><div class="extra"></div></div>
+      <div class="side"><span class="st"></span><button class="x" title="Убрать">${X_ICON}</button></div><div class="prog"></div>`;
+    li.querySelector('.x').onclick = () => removeItem(li.dataset.key);
+    $('#list').append(li);
+    rows.set(key, li);
+  }
+  li.dataset.key = key;
+  li.querySelector('.ic').innerHTML = ICONS[it.kind] || ICONS.file;
+  const name = li.querySelector('.name');
+  name.textContent = it.name; name.title = it.name;
+  li.querySelector('.meta').textContent = meta(it);
+  const [st, cls] = statusText(it);
+  const stEl = li.querySelector('.st');
+  stEl.textContent = st; stEl.className = 'st ' + cls;
+  const busy = it.status === 'queued' || it.status === 'running' || it.status === 'uploading';
+  li.querySelector('.x').title = busy ? 'Отменить' : 'Убрать';
+
+  const prog = li.querySelector('.prog');
+  const p = it.status === 'uploading' || it.status === 'running' ? (it.progress || 0) : it.status === 'done' ? 1 : 0;
+  prog.style.width = (p * 100) + '%';
+  prog.style.opacity = it.status === 'done' ? 0 : 1;
+
+  let extra = '';
+  if (it.status === 'error' && it.error) extra = `<div class="err-msg">${esc(it.error)}</div>`;
+  if (it.status === 'done' && it.outputs?.length) {
+    extra = '<div class="outs">' + it.outputs.map((o, n) => {
+      let delta = '';
+      const d = it.size && o.kind === it.kind ? Math.round((o.size / it.size - 1) * 100) : 0;
+      if (d) delta = `<span class="d ${d < 0 ? 'down' : ''}">${d < 0 ? '−' + -d : '+' + d}%</span>`;
+      return `<div class="out"><span class="arrow">→</span><button class="fn" data-n="${n}" title="Открыть">${esc(o.name)}</button>
+        <span class="sz">${fmtSize(o.size)}</span>${delta}<button class="rv" data-n="${n}" title="Показать в папке">${REVEAL_ICON}</button></div>`;
+    }).join('') + (it.note ? `<div class="note">${esc(it.note)}</div>` : '') + '</div>';
+  }
+  const ex = li.querySelector('.extra');
+  if (ex.dataset.html !== extra) {
+    ex.innerHTML = extra; ex.dataset.html = extra;
+    ex.querySelectorAll('.fn').forEach(b => b.onclick = () => post(`/api/open/${it.id}/${b.dataset.n}`));
+    ex.querySelectorAll('.rv').forEach(b => b.onclick = () => post(`/api/open/${it.id}/${b.dataset.n}?reveal=1`));
+  }
+}
+
+function upsert(it) {
+  const key = keyOf(it);
+  if (it.key && it.key !== key && items.has(it.key)) {
+    // the placeholder row of our own upload becomes the real item
+    const li = rows.get(it.key);
+    rows.delete(it.key); items.delete(it.key); uploads.delete(it.key);
+    if (li && !rows.has(key)) rows.set(key, li); else li?.remove();
+  }
+  items.set(key, it);
+  renderItem(key);
+  refresh();
+}
+
+function dropItem(key) {
+  rows.get(key)?.remove();
+  rows.delete(key); items.delete(key);
+  refresh();
+}
+
+function removeItem(key) {
+  const it = items.get(key);
+  if (!it) return;
+  if (it.status === 'uploading') { uploads.get(key)?.abort(); uploads.delete(key); return dropItem(key); }
+  if (it.id == null) return dropItem(key);
+  if (it.status === 'queued' || it.status === 'running') return post(`/api/cancel/${it.id}`);
+  fetch(`/api/items/${it.id}`, { method: 'DELETE' });
+  dropItem(key);
+}
+
+// ---------- uploads ----------
+const queue = [];
+let active = 0;
+
+function addFiles(files) {
+  for (const f of files) {
+    if (!f || (f.size === 0 && !f.type)) continue; // folders dropped by mistake
+    const key = `u${PAGE}${++seq}`;
+    items.set(key, { key, name: f.name, size: f.size, kind: guessKind(f.name), status: 'uploading', progress: 0 });
+    renderItem(key);
+    queue.push([key, f]);
+  }
+  pump();
+  refresh();
+}
+
+function pump() {
+  while (active < 3 && queue.length) {
+    const [key, f] = queue.shift();
+    if (!items.has(key)) continue;
+    active++;
+    upload(key, f).finally(() => { active--; pump(); refresh(); });
+  }
+}
+
+function upload(key, file) {
+  return new Promise(done => {
+    const x = new XMLHttpRequest();
+    uploads.set(key, x);
+    x.open('POST', `/api/upload?name=${encodeURIComponent(file.name)}&key=${key}`);
+    x.upload.onprogress = e => {
+      const it = items.get(key);
+      if (it && e.lengthComputable) { it.progress = e.loaded / e.total; renderItem(key); }
+    };
+    const fail = msg => {
+      const it = items.get(key);
+      if (it) { it.status = 'error'; it.error = msg; renderItem(key); }
+    };
+    x.onload = () => {
+      uploads.delete(key);
+      if (x.status === 200) upsert(JSON.parse(x.responseText));
+      else fail(x.responseText || 'Не удалось загрузить файл');
+      done();
+    };
+    x.onerror = () => { uploads.delete(key); fail('Не удалось загрузить файл'); done(); };
+    x.onabort = () => done();
+    x.send(file);
+  });
+}
+
+// ---------- options ----------
+const VIDEO_FORMATS = [['mp4', 'MP4'], ['mkv', 'MKV'], ['mov', 'MOV'], ['webm', 'WEBM'], ['avi', 'AVI'], ['gif', 'GIF']];
+const IMAGE_FORMATS = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WEBP'], ['avif', 'AVIF'], ['jxl', 'JXL'], ['gif', 'GIF'], ['bmp', 'BMP'], ['tiff', 'TIFF'], ['ico', 'ICO']];
+const AUDIO_FORMATS = [['mp3', 'MP3'], ['aac', 'AAC'], ['opus', 'OPUS'], ['ogg', 'OGG'], ['flac', 'FLAC'], ['wav', 'WAV']];
+const LOSSY = ['jpg', 'webp', 'avif', 'jxl'];
+
+const chips = (k, list) => `<div class="chips" data-k="${k}">` +
+  list.map(([v, t]) => `<button data-v="${v}" class="${String(S[k]) === String(v) ? 'on' : ''}">${t}</button>`).join('') + '</div>';
+const row = (label, html) => `<div class="row"><div class="lbl">${label}</div>${html}</div>`;
+const toggle = (k, text) => `<label class="tog"><input type="checkbox" data-k="${k}" ${S[k] ? 'checked' : ''}><span class="sw"></span>${text}</label>`;
+const slider = (k, min, max) => `<div class="range"><input type="range" data-k="${k}" min="${min}" max="${max}" value="${S[k]}"><output>${S[k]}</output></div>`;
+
+function renderOpts() {
+  const kinds = new Set([...items.values()].map(i => i.kind));
+  const z = S.mode === 'compress';
+  const groups = [];
+
+  if (kinds.has('video')) {
+    let g = '<div class="gt">Видео</div>';
+    if (!z) g += row('Формат', chips('video_format', VIDEO_FORMATS));
+    else {
+      const codecs = [['h264', 'H.264'], ['hevc', 'H.265']];
+      if (CAPS.av1) codecs.push(['av1', 'AV1']);
+      if (S.codec === 'av1' && !CAPS.av1) S.codec = 'hevc';
+      g += row('Кодек', chips('codec', codecs));
+      g += row('Качество', chips('quality', [['high', 'Высокое'], ['balanced', 'Баланс'], ['small', 'Компактно']]));
+      g += row('Разрешение', chips('resolution', [[0, 'Исходное'], [1080, '1080p'], [720, '720p'], [480, '480p']]));
+      g += row('Размер', `${toggle('target_on', 'Не больше')}<input class="num" type="number" min="1" step="1" data-k="target_mb" value="${S.target_mb}" ${S.target_on ? '' : 'disabled'}><span class="hint">МБ</span>`);
+    }
+    g += row('Звук', toggle('extract_audio', 'Отделить аудио в отдельный файл'));
+    if (S.extract_audio) {
+      g += '<div class="sub">' +
+        row('Формат', chips('extract_format', [['copy', 'Как в видео'], ['mp3', 'MP3'], ['aac', 'AAC'], ['opus', 'OPUS'], ['flac', 'FLAC'], ['wav', 'WAV']])) +
+        row('Видео', chips('video_audio', [['mute', 'Без звука'], ['keep', 'Со звуком'], ['none', 'Не сохранять']])) + '</div>';
+    }
+    if (CAPS.hw) g += row('Ускорение', toggle('gpu', `Видеокарта <span class="hint">${esc(CAPS.hw)}</span>`));
+    groups.push(g);
+  }
+
+  if (kinds.has('image')) {
+    const key = z ? 'image_format_z' : 'image_format';
+    const list = z ? [['same', 'Как есть'], ['jpg', 'JPG'], ['webp', 'WEBP'], ['avif', 'AVIF'], ['png', 'PNG']] : IMAGE_FORMATS;
+    let g = '<div class="gt">Изображения</div>' + row('Формат', chips(key, list));
+    if (LOSSY.includes(S[key]) || S[key] === 'same') g += row('Качество', slider('image_quality', 10, 100));
+    if (z) g += row('Размер', chips('image_max', [[0, 'Исходный'], [3840, '3840'], [2560, '2560'], [1920, '1920'], [1280, '1280']]));
+    groups.push(g);
+  }
+
+  if (kinds.has('audio')) {
+    let g = '<div class="gt">Аудио</div>' + row('Формат', chips('audio_format', AUDIO_FORMATS));
+    if (z && !kinds.has('video')) g += row('Качество', chips('quality', [['high', 'Высокое'], ['balanced', 'Баланс'], ['small', 'Компактно']]));
+    groups.push(g);
+  }
+
+  const opts = $('#opts');
+  opts.hidden = groups.length === 0;
+  const html = groups.map(g => `<div class="group">${g}</div>`).join('');
+  if (opts.dataset.html !== html) { opts.innerHTML = html; opts.dataset.html = html; }
+}
+
+$('#opts').addEventListener('click', e => {
+  const b = e.target.closest('.chips button');
+  if (!b) return;
+  const k = b.parentElement.dataset.k;
+  S[k] = typeof DEFAULTS[k] === 'number' ? +b.dataset.v : b.dataset.v;
+  save(); renderOpts();
+});
+$('#opts').addEventListener('change', e => {
+  const k = e.target.dataset.k;
+  if (!k) return;
+  if (e.target.type === 'checkbox') S[k] = e.target.checked;
+  else S[k] = +e.target.value;
+  save(); renderOpts();
+});
+$('#opts').addEventListener('input', e => {
+  if (e.target.type !== 'range' && e.target.type !== 'number') return;
+  S[e.target.dataset.k] = +e.target.value;
+  const out = e.target.parentElement.querySelector('output');
+  if (out) out.textContent = e.target.value;
+  save();
+});
+
+// ---------- mode, footer, actions ----------
+function renderMode() {
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.v === S.mode));
+}
+$('#mode').onclick = e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  S.mode = b.dataset.v; save(); renderMode(); renderOpts();
+};
+
+const all = () => [...items.values()];
+const isBusy = it => it.status === 'queued' || it.status === 'running';
+function targets() {
+  const ready = all().filter(i => i.id != null && !isBusy(i));
+  const fresh = ready.filter(i => i.status !== 'done');
+  return fresh.length ? fresh : ready;
+}
+
+function refresh() {
+  const list = all();
+  document.getElementById('app').classList.toggle('has-files', list.length > 0);
+  $('#dropTitle').textContent = list.length ? 'Добавить файлы' : 'Перетащите файлы сюда';
+  $('#bar').hidden = list.length === 0;
+  const running = list.some(isBusy);
+  const uploading = list.some(i => i.status === 'uploading');
+  const go = $('#go');
+  go.classList.toggle('stop', running);
+  go.textContent = running ? 'Остановить' : 'Начать';
+  go.disabled = !running && (uploading || targets().length === 0);
+  $('#clear').hidden = running || !list.some(i => ['done', 'error', 'cancelled'].includes(i.status));
+  renderOpts();
+}
+
+function post(url, body) {
+  return fetch(url, { method: 'POST', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+}
+
+$('#go').onclick = () => {
+  if (all().some(isBusy)) return post('/api/cancel-all');
+  const ids = targets().map(i => i.id);
+  if (ids.length) post('/api/start', { ids, settings: payload() });
+};
+$('#clear').onclick = () => {
+  post('/api/clear');
+  for (const [k, it] of items) if (it.id == null && it.status === 'error') dropItem(k);
+};
+$('#folder').onclick = () => post('/api/open-folder');
+
+// ---------- file input, drag & drop, paste ----------
+$('#pick').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  addFiles([...e.dataTransfer.files]);
+});
+addEventListener('paste', e => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) addFiles(files.map((f, i) => f.name && f.name !== 'image.png' ? f : new File([f], `Вставка ${new Date().toLocaleTimeString('ru').replace(/:/g, '-')}${i ? '-' + i : ''}.${(f.type.split('/')[1] || 'png')}`, { type: f.type })));
+});
+
+// ---------- live connection ----------
+const loadItems = () => fetch('/api/items').then(r => r.json()).then(list => list.forEach(upsert)).catch(() => {});
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'item') upsert(m.item);
+    else if (m.type === 'remove') dropItem('s' + m.id);
+  };
+  es.onerror = () => { es.onopen = loadItems; }; // after a reconnect, catch up on what was missed
+  loadItems();
+}
+
+async function init() {
+  renderMode();
+  refresh();
+  connect();
+  try {
+    CAPS = await (await fetch('/api/caps')).json();
+    $('#folderName').textContent = CAPS.out_short;
+    $('#folder').title = CAPS.out_dir;
+    if (!CAPS.ffmpeg) {
+      const b = $('#banner');
+      b.innerHTML = 'FFmpeg не найден. Установите его командой <code>winget install Gyan.FFmpeg</code> или положите ffmpeg.exe и ffprobe.exe рядом с программой, затем перезапустите её.';
+      b.hidden = false;
+    }
+    renderOpts();
+  } catch {}
+}
+init();
+</script>
+</body>
+</html>
