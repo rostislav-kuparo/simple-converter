@@ -265,40 +265,47 @@ async fn upload(State(app): Shared, Query(q): Query<UploadQuery>, body: Body) ->
         error: None,
         note: None,
         cancel: CancellationToken::new(),
+        rev: 0,
     };
     let view = item.view();
-    app.items.lock().unwrap().insert(id, item);
+    let follow = {
+        let mut follow = app.follow.lock().unwrap();
+        let settings = follow.remove(&item.key);
+        app.items.lock().unwrap().insert(id, item);
+        settings
+    };
     app.emit(json!({ "type": "item", "item": view }));
+    if let Some(settings) = follow {
+        job::start(&app, &[id], &settings).await;
+    }
     Ok(Json(view))
 }
 
 #[derive(Deserialize)]
 struct StartRequest {
     ids: Vec<u64>,
+    /// Upload keys of files still on their way: they start as soon as they arrive.
+    #[serde(default)]
+    keys: Vec<String>,
     settings: plan::Settings,
 }
 
 async fn start(State(app): Shared, Json(req): Json<StartRequest>) -> StatusCode {
-    for id in req.ids {
-        let token = CancellationToken::new();
-        let queued = app.update(id, |it| {
-            if it.busy() {
-                return false;
+    let mut ids = req.ids;
+    {
+        let mut follow = app.follow.lock().unwrap();
+        let items = app.items.lock().unwrap();
+        for key in req.keys {
+            // The upload may have finished while this request was on its way.
+            match items.values().find(|it| it.key == key) {
+                Some(it) => ids.push(it.id),
+                None => {
+                    follow.insert(key, req.settings.clone());
+                }
             }
-            it.status = Status::Queued;
-            it.progress = 0.0;
-            it.speed = None;
-            it.outputs.clear();
-            it.error = None;
-            it.note = None;
-            it.cancel = token.clone();
-            true
-        });
-        if queued == Some(true) {
-            app.active_jobs.fetch_add(1, Ordering::SeqCst);
-            tokio::spawn(job::run(app.clone(), id, req.settings.clone(), token));
         }
     }
+    job::start(&app, &ids, &req.settings).await;
     StatusCode::NO_CONTENT
 }
 
@@ -310,6 +317,7 @@ async fn cancel(State(app): Shared, Path(id): Path<u64>) -> StatusCode {
 }
 
 async fn cancel_all(State(app): Shared) -> StatusCode {
+    app.follow.lock().unwrap().clear();
     for it in app.items.lock().unwrap().values() {
         it.cancel.cancel();
     }

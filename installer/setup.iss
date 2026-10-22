@@ -4,7 +4,7 @@
 #define AppExe "simple-converter.exe"
 #define AppUrl "https://github.com/rostislav-kuparo/simple-converter"
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 ; Folder with ffmpeg.exe and ffprobe.exe; LICENSE/README of the build are taken from its parent.
 #ifndef FFmpegBin

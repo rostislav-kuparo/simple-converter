@@ -9,7 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::sync::{OwnedSemaphorePermit, oneshot};
 use tokio_util::sync::CancellationToken;
+
+type Turn = oneshot::Receiver<OwnedSemaphorePermit>;
 
 enum Failure {
     Cancelled,
@@ -23,9 +26,35 @@ impl From<String> for Failure {
     }
 }
 
-/// Caller has already marked the item as queued and bumped `active_jobs`.
-pub async fn run(app: Arc<App>, id: u64, settings: Settings, cancel: CancellationToken) {
-    let result = convert(&app, id, &settings, &cancel).await;
+/// Queues the items in the given order; busy ones are left alone.
+pub async fn start(app: &Arc<App>, ids: &[u64], settings: &Settings) {
+    let caps = app.caps().await;
+    for &id in ids {
+        let token = CancellationToken::new();
+        let queued = app.update(id, |it| {
+            if it.busy() {
+                return None;
+            }
+            it.status = Status::Queued;
+            it.progress = 0.0;
+            it.speed = None;
+            it.outputs.clear();
+            it.error = None;
+            it.note = None;
+            it.cancel = token.clone();
+            Some((it.kind, it.info.clone()))
+        });
+        let Some(Some((kind, info))) = queued else { continue };
+        // Only the kind of slot matters here; the job builds its plan again when its turn comes.
+        let heavy = plan::build(kind, &info, settings, caps, true).is_ok_and(|p| p.heavy);
+        let turn = app.take_turn(heavy);
+        app.active_jobs.fetch_add(1, Ordering::SeqCst);
+        tokio::spawn(run(app.clone(), id, settings.clone(), token, turn));
+    }
+}
+
+async fn run(app: Arc<App>, id: u64, settings: Settings, cancel: CancellationToken, turn: Turn) {
+    let result = convert(&app, id, &settings, &cancel, turn).await;
     app.update(id, |it| {
         it.speed = None;
         match result {
@@ -44,6 +73,7 @@ pub async fn run(app: Arc<App>, id: u64, settings: Settings, cancel: Cancellatio
         }
     });
     app.active_jobs.fetch_sub(1, Ordering::SeqCst);
+    app.pump(); // our slot is free again
 }
 
 async fn convert(
@@ -51,6 +81,7 @@ async fn convert(
     id: u64,
     settings: &Settings,
     cancel: &CancellationToken,
+    turn: Turn,
 ) -> Result<(Vec<OutFile>, Option<String>), Failure> {
     let (kind, info, src, name, src_size) = {
         let items = app.items.lock().unwrap();
@@ -61,9 +92,8 @@ async fn convert(
     let caps = app.caps().await;
     let mut plan = plan::build(kind, &info, settings, caps, true)?;
 
-    let slots = if plan.heavy { &app.heavy } else { &app.light };
     let _slot = tokio::select! {
-        slot = slots.acquire() => slot.map_err(|_| Failure::Gone)?,
+        slot = turn => slot.map_err(|_| Failure::Gone)?,
         _ = cancel.cancelled() => return Err(Failure::Cancelled),
     };
     app.update(id, |it| {

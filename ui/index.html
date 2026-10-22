@@ -55,6 +55,10 @@ svg { display: block; }
 .has-files .drop-icon { width: 26px; height: 26px; border-radius: 8px; margin: 0; }
 .has-files .drop-title { font-size: 14px; }
 .has-files .drop-sub { display: none; }
+.drop-alt { display: none; }
+.has-files .drop-alt { display: inline; }
+.link { color: var(--fg); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--mut) 50%, transparent); text-underline-offset: 3px; }
+.link:hover { text-decoration-color: var(--fg); }
 
 .list { list-style: none; padding: 0; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .item {
@@ -121,6 +125,7 @@ svg { display: block; }
 .folder:hover { color: var(--fg); }
 .folder span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.left { color: var(--mut); font-size: 13px; padding: 0 8px; white-space: nowrap; }
 .ghost { padding: 8px 14px; border-radius: 999px; color: var(--mut); }
 .ghost:hover { color: var(--fg); background: var(--soft); }
 .primary { padding: 9px 22px; border-radius: 999px; background: var(--fg); color: var(--bg); font-weight: 500; transition: opacity .15s; }
@@ -160,9 +165,11 @@ body.dragging .veil { opacity: 1; }
   <label class="drop" id="drop">
     <input type="file" id="pick" multiple hidden>
     <span class="drop-icon"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 3.5v11M3.5 9h11"/></svg></span>
-    <span class="drop-title" id="dropTitle">Перетащите файлы сюда</span>
-    <span class="drop-sub">или нажмите, чтобы выбрать · видео, фото, аудио</span>
+    <span class="drop-title" id="dropTitle">Перетащите файлы или папку</span>
+    <span class="drop-sub">или нажмите, чтобы выбрать — можно сразу много · <button type="button" class="link dir">выбрать папку</button></span>
+    <span class="drop-alt">или <button type="button" class="link dir">папку</button></span>
   </label>
+  <input type="file" id="pickDir" webkitdirectory hidden>
 
   <ul class="list" id="list"></ul>
 
@@ -176,6 +183,7 @@ body.dragging .veil { opacity: 1; }
       <span id="folderName">Загрузки</span>
     </button>
     <div class="actions">
+      <span class="left" id="left" hidden></span>
       <button class="ghost" id="clear" hidden>Очистить</button>
       <button class="primary" id="go">Начать</button>
     </div>
@@ -234,6 +242,7 @@ function payload() {
 const items = new Map();   // key -> item;  key is 's<id>' for server items, 'u<n>' while uploading
 const rows = new Map();    // key -> <li>
 const uploads = new Map(); // key -> XMLHttpRequest
+const follow = new Set();  // keys of uploads that start as soon as they arrive
 const PAGE = Math.random().toString(36).slice(2, 8); // upload keys must not collide between windows
 let seq = 0;
 const keyOf = it => 's' + it.id;
@@ -326,6 +335,8 @@ function renderItem(key) {
 
 function upsert(it) {
   const key = keyOf(it);
+  if (it.rev < items.get(key)?.rev) return; // an older state that arrived late
+  if (it.key) follow.delete(it.key);
   if (it.key && it.key !== key && items.has(it.key)) {
     // the placeholder row of our own upload becomes the real item
     const li = rows.get(it.key);
@@ -339,7 +350,7 @@ function upsert(it) {
 
 function dropItem(key) {
   rows.get(key)?.remove();
-  rows.delete(key); items.delete(key);
+  rows.delete(key); items.delete(key); follow.delete(key);
   refresh();
 }
 
@@ -358,13 +369,16 @@ const queue = [];
 let active = 0;
 
 function addFiles(files) {
+  const keys = [];
   for (const f of files) {
     if (!f || (f.size === 0 && !f.type)) continue; // folders dropped by mistake
     const key = `u${PAGE}${++seq}`;
     items.set(key, { key, name: f.name, size: f.size, kind: guessKind(f.name), status: 'uploading', progress: 0 });
     renderItem(key);
     queue.push([key, f]);
+    keys.push(key);
   }
+  if (keys.length && isRunning()) start([], keys); // files added mid-run join the queue
   pump();
   refresh();
 }
@@ -388,6 +402,7 @@ function upload(key, file) {
       if (it && e.lengthComputable) { it.progress = e.loaded / e.total; renderItem(key); }
     };
     const fail = msg => {
+      follow.delete(key);
       const it = items.get(key);
       if (it) { it.status = 'error'; it.error = msg; renderItem(key); }
     };
@@ -497,23 +512,33 @@ $('#mode').onclick = e => {
 
 const all = () => [...items.values()];
 const isBusy = it => it.status === 'queued' || it.status === 'running';
+const isRunning = () => follow.size > 0 || all().some(isBusy);
+// What "Начать" processes: new files (including ones still uploading), or everything again once all are done.
 function targets() {
   const ready = all().filter(i => i.id != null && !isBusy(i));
   const fresh = ready.filter(i => i.status !== 'done');
-  return fresh.length ? fresh : ready;
+  const keys = all().filter(i => i.status === 'uploading' && !follow.has(i.key)).map(i => i.key);
+  return { ids: (fresh.length || keys.length ? fresh : ready).map(i => i.id), keys };
+}
+
+function start(ids, keys) {
+  keys.forEach(k => follow.add(k));
+  post('/api/start', { ids, keys, settings: payload() });
 }
 
 function refresh() {
   const list = all();
   document.getElementById('app').classList.toggle('has-files', list.length > 0);
-  $('#dropTitle').textContent = list.length ? 'Добавить файлы' : 'Перетащите файлы сюда';
+  $('#dropTitle').textContent = list.length ? 'Добавить файлы' : 'Перетащите файлы или папку';
   $('#bar').hidden = list.length === 0;
-  const running = list.some(isBusy);
-  const uploading = list.some(i => i.status === 'uploading');
+  const running = isRunning();
+  $('#left').hidden = !running;
+  $('#left').textContent = `Осталось ${follow.size + list.filter(isBusy).length}`;
   const go = $('#go');
   go.classList.toggle('stop', running);
   go.textContent = running ? 'Остановить' : 'Начать';
-  go.disabled = !running && (uploading || targets().length === 0);
+  const t = targets();
+  go.disabled = !running && !t.ids.length && !t.keys.length;
   $('#clear').hidden = running || !list.some(i => ['done', 'error', 'cancelled'].includes(i.status));
   renderOpts();
 }
@@ -523,9 +548,10 @@ function post(url, body) {
 }
 
 $('#go').onclick = () => {
-  if (all().some(isBusy)) return post('/api/cancel-all');
-  const ids = targets().map(i => i.id);
-  if (ids.length) post('/api/start', { ids, settings: payload() });
+  if (isRunning()) { follow.clear(); post('/api/cancel-all'); return refresh(); }
+  const { ids, keys } = targets();
+  if (ids.length || keys.length) start(ids, keys);
+  refresh();
 };
 $('#clear').onclick = () => {
   post('/api/clear');
@@ -534,7 +560,37 @@ $('#clear').onclick = () => {
 $('#folder').onclick = () => post('/api/open-folder');
 
 // ---------- file input, drag & drop, paste ----------
-$('#pick').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+// Files go in name order (numbers compared as numbers), so the queue runs top to bottom.
+const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
+const byPath = (a, b) => collator.compare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name);
+const isMedia = f => guessKind(f.name) !== 'file';
+
+$('#pick').onchange = e => { addFiles([...e.target.files].sort(byPath)); e.target.value = ''; };
+$('#pickDir').onchange = e => { addFiles([...e.target.files].filter(isMedia).sort(byPath)); e.target.value = ''; };
+document.querySelectorAll('.dir').forEach(b => b.onclick = e => { e.preventDefault(); $('#pickDir').click(); });
+
+// Dropped files and whole folders with subfolders; inside folders only video, photo and audio are taken.
+function dropped(dt) {
+  const files = [...dt.files];
+  const entries = [...dt.items].map(i => i.kind === 'file' && i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.some(en => en.isDirectory)) return Promise.resolve(files.sort(byPath));
+  const file = en => new Promise(ok => en.file(ok, () => ok(null)));
+  const children = dir => new Promise(ok => {
+    const reader = dir.createReader(), found = [];
+    const next = () => reader.readEntries(part => part.length ? (found.push(...part), next()) : ok(found), () => ok(found));
+    next();
+  });
+  const walk = async (list, inDir) => {
+    const out = [];
+    for (const en of list.sort((a, b) => collator.compare(a.name, b.name))) {
+      if (en.isDirectory) out.push(...await walk(await children(en), true));
+      else if (!inDir || isMedia(en)) { const f = await file(en); if (f) out.push(f); }
+    }
+    return out;
+  };
+  return walk(entries, false);
+}
+
 let dragDepth = 0;
 const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
 addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
@@ -543,7 +599,7 @@ addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; doc
 addEventListener('drop', e => {
   if (!hasFiles(e)) return;
   e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
-  addFiles([...e.dataTransfer.files]);
+  dropped(e.dataTransfer).then(addFiles);
 });
 addEventListener('paste', e => {
   const files = [...(e.clipboardData?.files || [])];

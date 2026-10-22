@@ -1,14 +1,15 @@
 //! Shared application state: the file list, live events and output-name bookkeeping.
 
 use crate::media::{self, Caps, Kind, MediaInfo, Tools};
+use crate::plan::Settings;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::{OnceCell, Semaphore, broadcast};
+use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub struct Item {
     pub error: Option<String>,
     pub note: Option<String>,
     pub cancel: CancellationToken,
+    /// Bumped on every change, lets the page drop updates that arrive out of order.
+    pub rev: u64,
 }
 
 impl Item {
@@ -64,6 +67,7 @@ impl Item {
             "outputs": self.outputs,
             "error": self.error,
             "note": self.note,
+            "rev": self.rev,
         })
     }
 
@@ -81,9 +85,13 @@ pub struct App {
     pub out_dir: PathBuf,
     pub tmp_dir: PathBuf,
     /// Video encodes (each already uses every core or the GPU).
-    pub heavy: Semaphore,
+    heavy: Arc<Semaphore>,
     /// Images, audio and stream copies.
-    pub light: Semaphore,
+    light: Arc<Semaphore>,
+    /// Started jobs waiting for a slot, in the order they were started.
+    line: Mutex<VecDeque<Waiting>>,
+    /// Upload keys of files that should start as soon as they arrive.
+    pub follow: Mutex<HashMap<String, Settings>>,
     reserved: Mutex<HashSet<PathBuf>>,
     pub clients: AtomicUsize,
     pub active_jobs: AtomicUsize,
@@ -102,8 +110,10 @@ impl App {
             caps: OnceCell::new(),
             out_dir,
             tmp_dir,
-            heavy: Semaphore::new(2),
-            light: Semaphore::new((cores / 2).max(2)),
+            heavy: Arc::new(Semaphore::new(2)),
+            light: Arc::new(Semaphore::new((cores / 2).max(2))),
+            line: Mutex::new(VecDeque::new()),
+            follow: Mutex::new(HashMap::new()),
             reserved: Mutex::new(HashSet::new()),
             clients: AtomicUsize::new(0),
             active_jobs: AtomicUsize::new(0),
@@ -126,10 +136,39 @@ impl App {
             let mut items = self.items.lock().unwrap();
             let item = items.get_mut(&id)?;
             let r = f(item);
+            item.rev += 1;
             (r, item.view())
         };
         self.emit(json!({ "type": "item", "item": view }));
         Some(r)
+    }
+
+    /// Puts a job at the end of the line. The receiver yields its slot once every job started
+    /// earlier for the same kind of slot has got one, so files are taken top to bottom.
+    pub fn take_turn(&self, heavy: bool) -> oneshot::Receiver<OwnedSemaphorePermit> {
+        let (go, turn) = oneshot::channel();
+        self.line.lock().unwrap().push_back(Waiting { heavy, go });
+        self.pump();
+        turn
+    }
+
+    /// Hands free slots to the oldest waiting jobs. Must run whenever a job ends.
+    pub fn pump(&self) {
+        let mut line = self.line.lock().unwrap();
+        let mut i = 0;
+        while i < line.len() {
+            if line[i].go.is_closed() {
+                line.remove(i); // cancelled while waiting
+                continue;
+            }
+            let slots = if line[i].heavy { &self.heavy } else { &self.light };
+            match slots.clone().try_acquire_owned() {
+                Ok(slot) => {
+                    let _ = line.remove(i).unwrap().go.send(slot);
+                }
+                Err(_) => i += 1,
+            }
+        }
     }
 
     /// Picks a free "name.ext" / "name (2).ext" in the output folder and holds it until released.
@@ -152,6 +191,11 @@ impl App {
             reserved.remove(p);
         }
     }
+}
+
+struct Waiting {
+    heavy: bool,
+    go: oneshot::Sender<OwnedSemaphorePermit>,
 }
 
 /// Makes a user-supplied file name safe for Windows paths.
